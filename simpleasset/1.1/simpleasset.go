@@ -4,10 +4,11 @@ package main
 // 1. 외부모듈 포함
 import (
 	// 문자 버퍼를 사용하기 위한 라이블러리
+	"bytes"
 	"encoding/json" // JSON구조를 사용 (marshal, unmarshal)
 	"fmt"
-	"json"
 	"strconv"
+	"time"
 
 	// 문자열과 기본형사이의 변환
 	// 시간과 관련된
@@ -114,168 +115,113 @@ func (t *SimpleAsset) Del(stub shim.ChaincodeStubInterface, args []string) peer.
 }
 
 func (t *SimpleAsset) Transfer(stub shim.ChaincodeStubInterface, args []string) peer.Response {
-
+	// 1. 전달인자 확인
 	if len(args) != 3 {
-		return shim.Error("Incorrect number of arguments. Expecting a from_key, to_key and amount")
+		return shim.Error("Incorrect arguments. Expecting a from_key, to_key and amount")
 	}
-
-	// a -> b 50 송금
-
+	// 2. 보내는이, 받는이 GetState -> unmarshal
 	from_asset, err := stub.GetState(args[0])
 	if err != nil {
-		return shim.Error("Failed to get asset: " + args[0] + " with error:" + err.Error())
+		return shim.Error("Filed to get asset: " + args[0] + " with error: " + err.Error())
 	}
 	if from_asset == nil {
 		return shim.Error("Asset not found: " + args[0])
 	}
-
 	to_asset, err := stub.GetState(args[1])
 	if err != nil {
-		return shim.Error("Failed to get asset: " + args[1] + " with error:" + err.Error())
+		return shim.Error("Filed to get asset: " + args[1] + " with error: " + err.Error())
 	}
 	if to_asset == nil {
 		return shim.Error("Asset not found: " + args[1])
 	}
-
-	//from_asset, to_asset을 unmarshal
+	// 3. 잔액변환 및 검증, 전송수행
 	from := Asset{}
 	to := Asset{}
 	json.Unmarshal(from_asset, &from)
 	json.Unmarshal(to_asset, &to)
 
 	from_amount, _ := strconv.Atoi(from.Value)
-	to_amount, _ := strconv.Atoi(from.Value)
+	to_amount, _ := strconv.Atoi(to.Value)
 	amount, _ := strconv.Atoi(args[2])
 
-	// a의 value가 50 이상인지 확인(잔액 확인)
+	// 검증
 	if from_amount < amount {
-		return shim.Error("Non enough asset value: " + args[0])
+		return shim.Error("Not enough asset value: " + args[0])
 	}
 
-	// from_amount에서 -50
-	from.Value = strconv.Itoa(from_amount - 50)
+	// 4. marshal
+	from.Value = strconv.Itoa(from_amount - amount)
+	to.Value = strconv.Itoa(to_amount + amount)
 
-	// to_amount에서 +50
-	to.Value = strconv.Itoa(to_amount + 50)
+	from_asset, _ = json.Marshal(from)
+	to_asset, _ = json.Marshal(to)
 
-	// marshal
-	from_asset, _ := json.Marshal(from)
-	to_asset, _ := json.Marshal(to)
-
+	// 5. PutState
 	stub.PutState(args[0], from_asset)
 	stub.PutState(args[1], to_asset)
 
-	return shim.Success([]byte("Transfer done"))
+	return shim.Success([]byte("transfer done!"))
 }
 
-// func (t *SimpleAsset) Transfer(stub shim.ChaincodeStubInterface, args []string) peer.Response {
-// 	// 1. 전달인자 확인
-// 	if len(args) != 3 {
-// 		return shim.Error("Incorrect arguments. Expecting a from_key, to_key and amount")
-// 	}
-// 	// 2. 보내는이, 받는이 GetState -> unmarshal
-// 	from_asset, err := stub.GetState(args[0])
-// 	if err != nil {
-// 		return shim.Error("Filed to get asset: " + args[0] + " with error: " + err.Error())
-// 	}
-// 	if from_asset == nil {
-// 		return shim.Error("Asset not found: " + args[0])
-// 	}
-// 	to_asset, err := stub.GetState(args[1])
-// 	if err != nil {
-// 		return shim.Error("Filed to get asset: " + args[1] + " with error: " + err.Error())
-// 	}
-// 	if to_asset == nil {
-// 		return shim.Error("Asset not found: " + args[1])
-// 	}
-// 	// 3. 잔액변환 및 검증, 전송수행
-// 	from := Asset{}
-// 	to := Asset{}
-// 	json.Unmarshal(from_asset, &from)
-// 	json.Unmarshal(to_asset, &to)
+func (t *SimpleAsset) History(stub shim.ChaincodeStubInterface, args []string) peer.Response {
+	if len(args) < 1 {
+		return shim.Error("Incorrect number of arguments. Expecting 1")
+	}
+	assetName := args[0]
 
-// 	from_amount, _ := strconv.Atoi(from.Value)
-// 	to_amount, _ := strconv.Atoi(to.Value)
-// 	amount, _ := strconv.Atoi(args[2])
+	fmt.Printf("- start History: %s\n", assetName)
 
-// 	// 검증
-// 	if from_amount < amount {
-// 		return shim.Error("Not enough asset value: " + args[0])
-// 	}
+	resultsIterator, err := stub.GetHistoryForKey(assetName)
+	if err != nil {
+		return shim.Error(err.Error())
+	}
 
-// 	// 4. marshal
-// 	from.Value = strconv.Itoa(from_amount - amount)
-// 	to.Value = strconv.Itoa(to_amount + amount)
+	defer resultsIterator.Close() // 종료 수행 예약
 
-// 	from_asset, _ = json.Marshal(from)
-// 	to_asset, _ = json.Marshal(to)
+	var buffer bytes.Buffer
+	buffer.WriteString("[")
 
-// 	// 5. PutState
-// 	stub.PutState(args[0], from_asset)
-// 	stub.PutState(args[1], to_asset)
+	bArrayMemberAlreadyWritten := false
+	for resultsIterator.HasNext() {
+		response, err := resultsIterator.Next()
+		if err != nil {
+			return shim.Error(err.Error())
+		}
 
-// 	return shim.Success([]byte("transfer done!"))
-// }
+		if bArrayMemberAlreadyWritten == true {
+			buffer.WriteString(",")
+		}
+		buffer.WriteString("{\"TxId\":")
+		buffer.WriteString("\"")
+		buffer.WriteString(response.TxId)
+		buffer.WriteString("\"")
 
-// func (t *SimpleAsset) History(stub shim.ChaincodeStubInterface, args []string) peer.Response {
-// 	if len(args) < 1 {
-// 		return shim.Error("Incorrect number of arguments. Expecting 1")
-// 	}
-// 	assetName := args[0]
+		buffer.WriteString(", \"Value\":")
+		if response.IsDelete {
+			buffer.WriteString("null")
+		} else {
+			buffer.WriteString(string(response.Value)) // JSON key, value world state
+		}
 
-// 	fmt.Printf("- start History: %s\n", assetName)
+		buffer.WriteString(", \"Timestamp\":")
+		buffer.WriteString("\"")
+		buffer.WriteString(time.Unix(response.Timestamp.Seconds, int64(response.Timestamp.Nanos)).String())
+		buffer.WriteString("\"")
 
-// 	resultsIterator, err := stub.GetHistoryForKey(assetName)
-// 	if err != nil {
-// 		return shim.Error(err.Error())
-// 	}
+		buffer.WriteString(", \"IsDelete\":")
+		buffer.WriteString("\"")
+		buffer.WriteString(strconv.FormatBool(response.IsDelete))
+		buffer.WriteString("\"")
 
-// 	defer resultsIterator.Close() // 종료 수행 예약
+		buffer.WriteString("}")
+		bArrayMemberAlreadyWritten = true
+	}
+	buffer.WriteString("]")
 
-// 	var buffer bytes.Buffer
-// 	buffer.WriteString("[")
+	fmt.Printf("- History returning:\n%s\n", buffer.String())
 
-// 	bArrayMemberAlreadyWritten := false
-// 	for resultsIterator.HasNext() {
-// 		response, err := resultsIterator.Next()
-// 		if err != nil {
-// 			return shim.Error(err.Error())
-// 		}
-
-// 		if bArrayMemberAlreadyWritten == true {
-// 			buffer.WriteString(",")
-// 		}
-// 		buffer.WriteString("{\"TxId\":")
-// 		buffer.WriteString("\"")
-// 		buffer.WriteString(response.TxId)
-// 		buffer.WriteString("\"")
-
-// 		buffer.WriteString(", \"Value\":")
-// 		if response.IsDelete {
-// 			buffer.WriteString("null")
-// 		} else {
-// 			buffer.WriteString(string(response.Value)) // JSON key, value world state
-// 		}
-
-// 		buffer.WriteString(", \"Timestamp\":")
-// 		buffer.WriteString("\"")
-// 		buffer.WriteString(time.Unix(response.Timestamp.Seconds, int64(response.Timestamp.Nanos)).String())
-// 		buffer.WriteString("\"")
-
-// 		buffer.WriteString(", \"IsDelete\":")
-// 		buffer.WriteString("\"")
-// 		buffer.WriteString(strconv.FormatBool(response.IsDelete))
-// 		buffer.WriteString("\"")
-
-// 		buffer.WriteString("}")
-// 		bArrayMemberAlreadyWritten = true
-// 	}
-// 	buffer.WriteString("]")
-
-// 	fmt.Printf("- History returning:\n%s\n", buffer.String())
-
-// 	return shim.Success(buffer.Bytes())
-// }
+	return shim.Success(buffer.Bytes())
+}
 
 // 7. main 함수
 func main() {
