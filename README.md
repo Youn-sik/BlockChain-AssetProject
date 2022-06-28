@@ -1,4 +1,4 @@
-# BlockChainPra1
+# BlockChain-AssetProject
 
 HyperLeader Fabric 1.4 버전을 활용하여 CA의 인증서 기반으로 자산을 담을 수 있는 지갑을 발급 받으며, 해당 지갑에 자산을 생성, 송금이 가능하며 블록 생성 내역(자산 생성 및 송금 등) 을 조회할 수 있습니다.
 
